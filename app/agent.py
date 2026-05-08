@@ -31,6 +31,7 @@ class Intent(str, Enum):
     KNOWLEDGE = "knowledge"
     APPOINTMENT = "appointment"
     OUT_OF_SCOPE = "out_of_scope"
+    GREETING = "greeting"
 
 
 @dataclass
@@ -100,7 +101,7 @@ def classify_intent(question: str) -> Intent:
     # Be forgiving: take the first known token we see.
     for token in raw.replace(",", " ").split():
         token = token.strip(".:;!? ")
-        if token in {Intent.KNOWLEDGE.value, Intent.APPOINTMENT.value, Intent.OUT_OF_SCOPE.value}:
+        if token in {Intent.KNOWLEDGE.value, Intent.APPOINTMENT.value, Intent.OUT_OF_SCOPE.value, Intent.GREETING.value}:
             return Intent(token)
 
     log_event(log, "router.unparseable_response", raw=raw[:80])
@@ -151,6 +152,22 @@ def _handle_out_of_scope() -> AgentResult:
         used_llm=False,
     )
 
+_GREETING_REPLY = (
+    "Hi! I'm a healthcare clinic assistant. I can answer questions about clinic "
+    "policies, telehealth, medication refills, insurance eligibility, privacy "
+    "guidelines, and discharge instructions. I can also check mock appointment "
+    "availability — try asking 'Can I book a cardiology appointment for Monday?'"
+)
+
+
+def _handle_greeting() -> AgentResult:
+    return AgentResult(
+        answer=_GREETING_REPLY,
+        sources=[],
+        confidence="high",
+        intent=Intent.GREETING,
+        used_llm=False,
+    )
 
 def run(question: str) -> AgentResult:
     """Top-level entry point used by the API layer."""
@@ -161,4 +178,6 @@ def run(question: str) -> AgentResult:
         return _handle_appointment(question)
     if intent is Intent.OUT_OF_SCOPE:
         return _handle_out_of_scope()
+    if intent is Intent.GREETING:               
+        return _handle_greeting()
     return _handle_knowledge(question)
