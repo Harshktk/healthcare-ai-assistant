@@ -1,0 +1,80 @@
+# Three services:
+#   - ollama : the local LLM runtime
+#   - api    : FastAPI backend (RAG + agent)
+#   - ui     : Streamlit chat frontend
+#
+# First-time start:
+#   docker compose up --build
+#   docker compose exec ollama ollama pull llama3.2:3b
+#   curl -X POST http://localhost:8000/ingest -H 'Content-Type: application/json' -d '{"reset": true}'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: healthcare-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+    image: healthcare-ai-assistant:latest
+    container_name: healthcare-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      VECTOR_STORE_DIR: /app/vector_store
+      DATA_DIR: /app/data
+      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount the data folder so docs added at runtime are picked up.
+      - ./data:/app/data
+      # Persist the Chroma index across container restarts.
+      - vector-store:/app/vector_store
+      # Cache HuggingFace models so subsequent starts are fast.
+      - hf-cache:/app/.cache/hf
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  ui:
+    image: healthcare-ai-assistant:latest
+    container_name: healthcare-ui
+    command: >
+      streamlit run ui/streamlit_app.py
+        --server.port 8501
+        --server.address 0.0.0.0
+        --browser.gatherUsageStats false
+    environment:
+      API_BASE_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ollama-models:
+  vector-store:
+  hf-cache:
