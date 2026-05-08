@@ -5,7 +5,7 @@ them, and upserts them into the vector store. Idempotent: re-running on
 the same files produces no duplicates because chunk IDs are derived
 from a content hash.
 
-Supported file types: ``.md``, ``.txt``, ``.pdf``.
+Supported file types: ``.md``, ``.txt``, ``.pdf``, ``.csv``, ``.json``, ``.xml``.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from app.vectorstore import get_vector_store
 
 log = get_logger(__name__)
 
-SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf"}
+SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf", ".csv", ".json", ".xml"}
 
 
 # ---------------------------------------------------------------------------
@@ -71,12 +71,58 @@ def _read_pdf(path: Path) -> str:
     return "\n\n".join(pages)
 
 
+def _read_csv(path: Path) -> str:
+    """Read a CSV file and flatten each row into a pipe-separated line."""
+    import csv
+
+    rows: list[str] = []
+    with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+        for row in csv.reader(f):
+            rows.append(" | ".join(row))
+    return "\n".join(rows)
+
+
+def _read_json(path: Path) -> str:
+    """Read a JSON file and pretty-print it so the chunker has line breaks."""
+    import json
+
+    data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def _read_xml(path: Path) -> str:
+    """Walk an XML tree and emit ``tag: text [attrs]`` lines."""
+    import xml.etree.ElementTree as ET
+
+    parts: list[str] = []
+
+    def walk(node: ET.Element) -> None:
+        text = (node.text or "").strip()
+        if text or node.attrib:
+            attrs = " ".join(f"{k}={v}" for k, v in node.attrib.items())
+            line = f"{node.tag}: {text}".strip()
+            if attrs:
+                line += f" [{attrs}]"
+            parts.append(line)
+        for child in node:
+            walk(child)
+
+    walk(ET.parse(str(path)).getroot())
+    return "\n".join(parts)
+
+
 def _load_document(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in (".md", ".txt"):
         return _read_text_file(path)
     if suffix == ".pdf":
         return _read_pdf(path)
+    if suffix == ".csv":
+        return _read_csv(path)
+    if suffix == ".json":
+        return _read_json(path)
+    if suffix == ".xml":
+        return _read_xml(path)
     raise ValueError(f"Unsupported file type: {suffix}")
 
 
