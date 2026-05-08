@@ -13,8 +13,9 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from typing import Any
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -115,11 +116,29 @@ async def health() -> HealthResponse:
 
 
 @app.post("/ingest", response_model=IngestResponse, tags=["ingestion"])
-async def ingest(req: IngestRequest) -> IngestResponse:
-    """Re-ingest every supported file in the configured data directory."""
+async def ingest(
+    reset: bool = False,
+    files: list[UploadFile] | None = File(default=None),
+) -> IngestResponse:
+    """Re-ingest data/. Optionally accept uploaded files first."""
+    settings = get_settings()
+
+    if files:
+        upload_dir = settings.data_dir_resolved / "uploads"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        for f in files:
+            suffix = Path(f.filename or "").suffix.lower()
+            if suffix not in {".md", ".txt", ".pdf", ".csv", ".json", ".xml"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported type {suffix} for {f.filename}",
+                )
+            (upload_dir / f.filename).write_bytes(await f.read())
+            log_event(log, "upload.saved", filename=f.filename)
+
     try:
-        stats = ingest_directory(reset=req.reset)
-    except Exception as exc:  # noqa: BLE001
+        stats = ingest_directory(reset=reset)
+    except Exception as exc:
         log.exception("ingest.failed")
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
 
