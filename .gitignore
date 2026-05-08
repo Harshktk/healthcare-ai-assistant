@@ -216,3 +216,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Project-specific ---
+# Persisted vector store (rebuilt by /ingest)
+vector_store/
+# Downloaded public datasets (synthetic docs are tracked, public/ is bulk + may be large)
+data/public/
+# Editor / IDE
+.idea/
+.vscode/
+# OS junk
+.DS_Store
+Thumbs.db
+
