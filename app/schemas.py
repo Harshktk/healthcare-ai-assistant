@@ -49,7 +49,7 @@ class AskResponse(BaseModel):
     answer: str
     sources: list[SourceModel]
     confidence: Literal["high", "medium", "low"]
-    intent: Literal["knowledge", "appointment", "out_of_scope"]
+    intent: Literal["knowledge", "appointment", "out_of_scope", "greeting"]
     used_llm: bool
     tool_output: dict | None = None
 
