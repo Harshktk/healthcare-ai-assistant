@@ -34,7 +34,7 @@ services:
       OLLAMA_HOST: http://ollama:11434
       VECTOR_STORE_DIR: /app/vector_store
       DATA_DIR: /app/data
-      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      LLM_MODEL: ${LLM_MODEL:-mistral:latest}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
