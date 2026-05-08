@@ -42,12 +42,24 @@ with st.sidebar:
             st.error(f"Health check failed: {exc}")
 
     st.markdown("### Knowledge base")
-    if st.button("Re-ingest documents", use_container_width=True):
-        with st.spinner("Ingesting…"):
+    uploaded_files = st.file_uploader(
+        "Upload .md / .txt / .pdf / .csv / .json / .xml (optional)",
+        type=["md", "txt", "pdf", "csv", "json", "xml"],
+        accept_multiple_files=True,
+    )
+    reset = st.checkbox("Reset before ingest", value=True)
+
+    if st.button("Ingest", use_container_width=True):
+        with st.spinner("Ingesting..."):
             try:
+                files_payload = [
+                    ("files", (f.name, f.getvalue(), f.type or "application/octet-stream"))
+                    for f in (uploaded_files or [])
+                ]
                 resp = httpx.post(
                     f"{API_BASE_URL}/ingest",
-                    json={"reset": True},
+                    params={"reset": str(reset).lower()},
+                    files=files_payload or None,
                     timeout=300,
                 ).json()
                 st.success(
@@ -56,7 +68,7 @@ with st.sidebar:
                 )
                 if resp.get("errors"):
                     st.warning(resp["errors"])
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 st.error(f"Ingest failed: {exc}")
 
     st.markdown("---")

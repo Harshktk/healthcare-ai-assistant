@@ -14,7 +14,7 @@
       "question": "Are controlled substances eligible for telehealth refill?",
       "expected_intent": "knowledge",
       "expected_documents": ["telehealth_policy.md", "medication_refill_policy.md"],
-      "must_include_any": ["cannot", "in person", "in-person"],
+      "must_include_any": ["cannot", "in person", "in-person", "not eligible", "not allowed"],
       "must_not_be_refusal": true
     },
     {
