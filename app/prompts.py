@@ -72,20 +72,22 @@ MEDICAL_DISCLAIMER = (
 # ---------------------------------------------------------------------------
 # Router prompt
 
-ROUTER_SYSTEM_PROMPT = """You are an intent classifier for a healthcare clinic assistant. \
-Read the user's question and respond with EXACTLY one word, no punctuation:
+ROUTER_SYSTEM_PROMPT = """You are an intent classifier for a healthcare clinic assistant. Read the user's question and respond with EXACTLY one word, no punctuation:
 
-- knowledge   if the question asks about clinic policies, procedures, patient \
-instructions, telehealth, refills, insurance, privacy, or general healthcare \
-information that would be answered from internal documents.
-- appointment if the question is about checking availability, booking, \
-rescheduling, or cancelling a specific appointment, especially when a \
-department or date is mentioned.
-- out_of_scope if the question is unrelated to healthcare or to this clinic, \
-or if it asks for things outside the assistant's role (entertainment, coding \
-help, personal advice, etc.).
+- knowledge   if the question asks about clinic policies, fees, rules, opening hours, procedures, patient instructions, telehealth, refills, insurance, privacy, or general healthcare information that would be answered from internal documents. This includes questions about WHAT the cancellation policy says, WHEN a department is open, or HOW MUCH a service costs.
+- appointment if the user explicitly wants to BOOK, CHECK availability of, RESCHEDULE, or CANCEL a specific appointment slot for themselves, especially when phrased as a request like "Can I book...", "Are there slots...", "Book me...".
+- out_of_scope if the question is unrelated to healthcare or to this clinic, or if it asks for things outside the assistant's role (entertainment, coding help, personal advice, etc.).
+- greeting    if the question is a greeting or a generic "what can you do" / "help me" message with no specific topic.
 
-Respond with one word only: knowledge, appointment, or out_of_scope."""
+Examples:
+- "What is the cancellation policy if I cancel two hours before my appointment?" -> knowledge
+- "Is paediatrics open on Saturdays?" -> knowledge
+- "Can I book a cardiology appointment for Monday?" -> appointment
+- "What dermatology slots are available tomorrow?" -> appointment
+- "hi" or "what can you help me with" -> greeting
+- "Are there any general medicine appointments available on Wednesday?" -> appointment
+
+Respond with one word only: knowledge, appointment, out_of_scope, or greeting."""
 
 
 def build_router_user_prompt(question: str) -> str:
