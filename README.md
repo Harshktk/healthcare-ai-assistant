@@ -2,19 +2,20 @@
 
 A Retrieval-Augmented Generation (RAG) prototype that answers questions
 about clinic policies, patient instructions, and general healthcare
-information using a curated set of documents. Built for the **Mindbowser
-AI Engineer hackathon assignment**.
+information. Built for the **Mindbowser AI Engineer hackathon**.
 
 The assistant:
 
-- Ingests healthcare policy and patient-education documents from a folder
-- Stores chunked embeddings in a persistent ChromaDB vector store
-- Retrieves grounded context for each question
-- Generates an answer with a local LLM via **Ollama**, citing source chunks
-- Refuses to answer when the documents do not cover the question
+- Ingests `.md`, `.txt`, `.pdf`, `.csv`, `.json`, and `.xml` documents
+- Stores chunked embeddings in a persistent **ChromaDB** vector store
+- Retrieves grounded context for each question and cites the chunks used
+- Generates answers with a local LLM via **Ollama** (Mistral / Llama 3.2)
+- Refuses cleanly when the documents do not cover the question
 - Routes appointment-style questions to a mock scheduling tool
-- Exposes everything through a FastAPI service with a Streamlit chat UI
-- Ships with a Dockerfile, docker-compose, and an end-to-end eval script
+- Exposes everything through a **FastAPI** service with a **Streamlit** chat UI
+- Ships with a Dockerfile, docker-compose, an eval script, and unit tests
+
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the HLD/LLD breakdown.
 
 ---
 
@@ -32,10 +33,10 @@ The assistant:
 |  Postman    |                  |  app    |-->|  (local LLM)   |
 +-------------+                  |         |   +----------------+
                                  |  Agent  |
-                                 |  router |
+                                 |  router |  (strict heuristic, no LLM call)
                                  +---+--+--+
                                      |  |
-                       knowledge ----+  +---- appointment
+                       knowledge ----+  +---- appointment / greeting
                             v                     v
                   +----------------+      +---------------------+
                   |  RAG pipeline  |      |  Mock tool          |
@@ -51,25 +52,26 @@ The assistant:
                           ^
                           |
                   POST /ingest
-                  (data/synthetic + data/public)
+                  (data/synthetic + data/uploads + any drop-ins)
 ```
 
 **Request flow for `POST /ask`:**
 
-1. `agent.classify_intent` calls the LLM with the router prompt and gets back
-   one of `knowledge`, `appointment`, `out_of_scope`. If the LLM is
-   unavailable, a keyword heuristic takes over.
+1. `agent.classify_intent` runs a strict keyword heuristic to pick one of
+   `knowledge`, `appointment`, `greeting`, or `out_of_scope`. **No LLM call
+   here** — it's fast and predictable on small models.
 2. **Knowledge:** the question is embedded, top-_k_ chunks are retrieved
-   from Chroma, the top distance is mapped to a confidence label
-   (`high` / `medium` / `low`). If `low`, the assistant refuses immediately
-   without calling the LLM. Otherwise the LLM is called with a strict
-   system prompt and the retrieved context, and the answer is returned with
-   structured source citations.
+   from Chroma, and the top distance is mapped to a confidence label
+   (`high` / `medium` / `low`). On `low`, the assistant refuses without
+   calling the LLM. Otherwise the LLM is called with a strict system prompt
+   and the retrieved context, and the answer is returned with structured
+   source citations.
 3. **Appointment:** department + date are extracted from the question, the
    mock tool returns synthetic availability, and a friendly answer is
    formatted. No LLM call.
-4. **Out of scope:** a polite, fixed refusal that points the user back to
-   the assistant's actual scope.
+4. **Greeting:** static help message describing what the assistant can do.
+5. **Out of scope:** caught implicitly — RAG returns the refusal sentinel
+   when no chunk is relevant.
 
 ---
 
@@ -78,22 +80,22 @@ The assistant:
 ```
 healthcare-ai-assistant/
 ├── app/
-│   ├── main.py             # FastAPI app + endpoints
+│   ├── main.py             # FastAPI + endpoints
 │   ├── config.py           # pydantic-settings, .env-driven
-│   ├── ingestion.py        # load -> chunk -> embed -> store
+│   ├── ingestion.py        # load -> chunk -> embed -> store (md/txt/pdf/csv/json/xml)
 │   ├── embeddings.py       # sentence-transformers wrapper
 │   ├── vectorstore.py      # ChromaDB wrapper
 │   ├── llm.py              # Ollama client + retry logic
 │   ├── rag.py              # retrieval + grounded answer + confidence
-│   ├── agent.py            # intent router (LLM + heuristic fallback)
+│   ├── agent.py            # strict heuristic intent router
 │   ├── tools.py            # mock check_available_slots
-│   ├── prompts.py          # system prompts (RAG + router)
+│   ├── prompts.py          # system prompts (RAG + legacy router)
 │   ├── schemas.py          # Pydantic request/response models
 │   └── logger.py           # structured logging
 ├── data/
 │   ├── synthetic/          # 6 hand-written healthcare docs
-│   └── public/             # drop-in folder for public datasets (gitignored)
-├── ui/streamlit_app.py     # chat frontend
+│   └── uploads/            # files dropped in via the UI / API (gitignored)
+├── ui/streamlit_app.py     # chat frontend with inline file uploader
 ├── eval/
 │   ├── questions.json      # curated Q&A test set (15 cases)
 │   └── eval.py             # end-to-end evaluation harness
@@ -101,6 +103,7 @@ healthcare-ai-assistant/
 │   ├── conftest.py         # stubs LLM + embeddings for fast tests
 │   └── test_basic.py
 ├── vector_store/           # Chroma persistent index (gitignored)
+├── ARCHITECTURE.md         # HLD / LLD reference
 ├── .env.example
 ├── requirements.txt
 ├── Dockerfile
@@ -115,21 +118,37 @@ healthcare-ai-assistant/
 | Layer | Choice | Why |
 | --- | --- | --- |
 | API | **FastAPI** | Async, Pydantic models, free `/docs` Swagger UI is itself a great demo surface. |
-| Vector DB | **ChromaDB** (persistent) | One pip install, embedded mode means no extra server to run, metadata filters built in. Production swap to Qdrant/Weaviate is a one-file change in `vectorstore.py`. |
-| Embeddings | **sentence-transformers/all-MiniLM-L6-v2** | 384-dim, runs comfortably on CPU, good enough for short policy docs. Easy upgrade to BGE / GTE for better recall. |
+| Vector DB | **ChromaDB** (persistent) | One pip install, embedded mode means no extra server, metadata filters built in. Production swap to Qdrant/Weaviate is a one-file change in `vectorstore.py`. |
+| Embeddings | **sentence-transformers/all-MiniLM-L6-v2** | 384-dim, runs comfortably on CPU, good enough for short policy docs. |
 | Chunking | `RecursiveCharacterTextSplitter`, **500 chars / 50 overlap**, markdown-aware separators | Short policy docs respond well to small chunks; large chunks dilute relevance scores. |
-| LLM | **Ollama + `llama3.2:3b`** (default) | Local, private, free; aligns with healthcare data-residency expectations. Configurable via `LLM_MODEL` (`mistral`, `phi3`, `gemma2`, etc.). |
-| Frontend | **Streamlit** | Minimal code, polished chat UI, calls the same HTTP API a real client would. |
+| LLM | **Ollama + `mistral:latest` or `llama3.2:3b`** | Local, private, free; aligns with healthcare data-residency expectations. Configurable via `LLM_MODEL` env var. |
+| Frontend | **Streamlit** | Minimal code, polished chat UI with inline file upload, calls the same HTTP API a real client would. |
 
 ### Why local LLM for healthcare
 
-The panel will likely ask about PHI considerations. A local LLM via Ollama
-keeps every byte of every question and every retrieved chunk inside the
-deployment boundary. No third-party data sharing, no Business Associate
-Agreement to negotiate, no audit-logging-the-third-party concern. For a
-production deployment over real PHI we would still need encryption at
-rest, an audit log of every query, role-based access, and a redaction
-layer in front of ingestion — see *Limitations and future work* below.
+A local LLM via Ollama keeps every byte of every question and every
+retrieved chunk inside the deployment boundary. No third-party data
+sharing, no Business Associate Agreement to negotiate. For production
+over real PHI we would still need encryption at rest, audit logging,
+role-based access, and a redaction layer in front of ingestion — see
+*Limitations and future work* below.
+
+### Why a heuristic router (not an LLM router)
+
+The original design used a small LLM call to classify intent. With small
+local models (3–7 B params on CPU), this added 10–30 s of latency per
+question and produced unreliable classifications (e.g. routing "When
+should I seek urgent care?" to the appointment tool because of the word
+"when"). The current router is a tight keyword heuristic that:
+
+- Routes to **appointment** only on explicit booking phrases
+  (`book`, `schedule a `, `available slot`, `reschedule`, …)
+- Routes very short conversational inputs (`hi`, `hello`, `help me`) to
+  **greeting**
+- Defaults everything else to **knowledge** and lets RAG handle it
+  (the low-similarity refusal sentinel covers true out-of-scope queries)
+
+This is faster, deterministic, and easier to defend in the panel demo.
 
 ---
 
@@ -142,15 +161,13 @@ layer in front of ingestion — see *Limitations and future work* below.
 docker compose up --build
 
 # In a second terminal: pull the model the first time
-docker compose exec ollama ollama pull llama3.2:3b
+docker compose exec ollama ollama pull llama3.2:3b   # or mistral:latest
 
 # Ingest the synthetic documents
-curl -X POST http://localhost:8000/ingest \
-     -H 'Content-Type: application/json' \
-     -d '{"reset": true}'
+curl -X POST "http://localhost:8000/ingest?reset=true"
 
-# UI: http://localhost:8501
-# API docs: http://localhost:8000/docs
+# UI:        http://localhost:8501
+# API docs:  http://localhost:8000/docs
 ```
 
 ### Option 2 — Local Python
@@ -161,7 +178,7 @@ ollama serve &              # in its own terminal/process
 ollama pull llama3.2:3b
 
 python -m venv .venv
-source .venv/bin/activate   # on Windows: .venv\Scripts\activate
+.venv\Scripts\activate      # on macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env        # adjust if needed
@@ -170,10 +187,10 @@ cp .env.example .env        # adjust if needed
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 # In another terminal — UI
-API_BASE_URL=http://localhost:8000 streamlit run ui/streamlit_app.py
+streamlit run ui/streamlit_app.py
 
 # Ingest the documents
-curl -X POST http://localhost:8000/ingest -H 'Content-Type: application/json' -d '{"reset": true}'
+curl -X POST "http://localhost:8000/ingest?reset=true"
 ```
 
 ---
@@ -182,20 +199,25 @@ curl -X POST http://localhost:8000/ingest -H 'Content-Type: application/json' -d
 
 ### `POST /ingest`
 
-Re-ingest every supported file (`.md`, `.txt`, `.pdf`) inside `data/`.
+Re-ingest every supported file (`.md`, `.txt`, `.pdf`, `.csv`, `.json`,
+`.xml`) inside `data/`. Optionally accepts uploaded files first
+(saved to `data/uploads/`).
 
 ```bash
-curl -X POST http://localhost:8000/ingest \
-     -H 'Content-Type: application/json' \
-     -d '{"reset": true}'
+# Just rebuild the index from disk
+curl -X POST "http://localhost:8000/ingest?reset=true"
+
+# Upload a file and re-ingest
+curl -X POST "http://localhost:8000/ingest?reset=false" \
+     -F "files=@./mydoc.pdf"
 ```
 
 ```json
 {
-  "files_processed": 6,
+  "files_processed": 7,
   "files_skipped": 0,
-  "chunks_indexed": 41,
-  "documents_indexed": ["telehealth_policy.md", "..."],
+  "chunks_indexed": 62,
+  "documents_indexed": ["telehealth_policy.md", "...", "mydoc.pdf"],
   "errors": []
 }
 ```
@@ -226,7 +248,7 @@ curl -X POST http://localhost:8000/ask \
 }
 ```
 
-If the documents do not cover the question, the assistant returns:
+If the documents do not cover the question:
 
 ```json
 {
@@ -248,10 +270,10 @@ curl http://localhost:8000/health
 {
   "status": "ok",
   "version": "0.1.0",
-  "vector_store": { "ok": true, "chunk_count": 41 },
+  "vector_store": { "ok": true, "chunk_count": 103 },
   "llm": {
     "ok": true,
-    "host": "http://localhost:11434",
+    "host": "http://ollama:11434",
     "configured_model": "llama3.2:3b",
     "model_available": true,
     "available_models": ["llama3.2:3b"]
@@ -265,15 +287,18 @@ curl http://localhost:8000/health
 
 | Question | Intent | Expected behaviour |
 | --- | --- | --- |
-| Can a patient request a medication refill through telehealth? | knowledge | Cites `telehealth_policy.md` and/or `medication_refill_policy.md` |
-| What is the cancellation fee if I cancel two hours before? | knowledge | Cites `appointment_scheduling_policy.md` |
-| Do I need a referral to see a specialist? | knowledge | Cites `insurance_eligibility_faq.md`, distinguishes HMO vs PPO |
-| When should I go to the emergency department after discharge? | knowledge | Cites `discharge_instructions.md` |
-| Can I book a cardiology appointment for Monday? | appointment | Returns mock slots from `tools.py` |
+| Can a patient request a medication refill through telehealth? | knowledge | Cites `telehealth_policy.md` / `medication_refill_policy.md` |
+| What is the late cancellation fee? | knowledge | Cites `appointment_scheduling_policy.md` |
+| Do HMO plans need a referral to see a specialist? | knowledge | Cites `insurance_eligibility_faq.md`, distinguishes HMO vs PPO |
+| When can I seek urgent care after discharge? | knowledge | Cites `discharge_instructions.md` |
+| What rights do patients have over their medical records? | knowledge | Cites `hipaa_guidelines.md` |
+| Can I book a cardiology appointment for Monday? | appointment | Returns mock slots |
+| Reschedule my paediatrics appointment to Friday | appointment | Mock slots |
+| hi / hello / what can you help me with? | greeting | Static help message |
 | What is the recommended insulin dose for type 2 diabetes? | knowledge | Refuses (no context, safety rule) |
-| Who won the FIFA World Cup in 2022? | out_of_scope | Polite redirect |
+| Who won the FIFA World Cup in 2022? | knowledge → refusal | Low similarity → refusal sentinel |
 
-Run the full eval suite (15 cases) once the API is up:
+Run the full eval suite once the API is up:
 
 ```bash
 python -m eval.eval --base-url http://localhost:8000
@@ -316,11 +341,6 @@ appends the question. **Citations are produced from retrieval metadata, not
 from the LLM's own output**, which removes a whole class of hallucinated-
 source bugs.
 
-A short separate **router prompt** classifies each question into
-`knowledge`, `appointment`, or `out_of_scope`. The router runs at
-`temperature=0.0` and falls back to keyword heuristics if Ollama is
-unreachable, so the assistant always responds.
-
 A final medical disclaimer is appended in `rag.py` (not by the model) to
 make sure every answer carries it.
 
@@ -328,23 +348,22 @@ make sure every answer carries it.
 
 ## Design decisions and trade-offs
 
+- **Heuristic router over an LLM router.** Faster, deterministic, easier to
+  explain. The legacy LLM router prompt is preserved in `prompts.py` for
+  reference and could be re-enabled with one line in `agent.py`.
 - **Confidence is computed, not hallucinated.** The label is derived from
   the cosine distance of the top retrieved chunk. If even the best chunk is
   below the threshold (`CONFIDENCE_MEDIUM_MAX_DISTANCE`), the assistant
-  refuses without calling the LLM. This is the cheapest, most reliable way
-  to prevent groundless answers.
+  refuses without calling the LLM.
 - **Idempotent ingestion.** Chunk IDs are
   `{document}::{chunk_index}::{sha1_short(text)}`. Re-running `/ingest`
   upserts; the same content produces the same ID, so duplicates are
-  impossible. Editing a document changes the hash for the changed chunks
-  only, which Chroma replaces cleanly.
-- **Custom router over LangChain/CrewAI.** A handful of lines is easier to
-  explain in the panel and easier to debug live. The agent abstraction
-  remains modular: adding a new tool is one entry in `tools.py` plus one
-  branch in `agent.run`.
+  impossible.
+- **Single `/ingest` for upload + rebuild.** Simpler API surface than two
+  endpoints. Optional `files` multipart param accepts uploads, then the
+  pipeline re-scans `data/` (re-ingestion is fast thanks to chunk-hash IDs).
 - **No streaming responses.** Out of scope for the time budget. Easy to add
-  later by exposing a streaming endpoint and iterating over Ollama's
-  `stream=True` chunks.
+  by switching to Ollama's `stream=True` and exposing SSE on `/ask`.
 
 ---
 
@@ -352,20 +371,15 @@ make sure every answer carries it.
 
 This prototype uses synthetic documents only. For a production deployment:
 
-- **Local LLM only.** Ollama keeps the inference on-prem; no third-party
-  data sharing.
-- **Encryption.** Encrypt the vector store at rest (LUKS/dm-crypt or
-  cloud-provider KMS) and use mTLS between services.
-- **Audit logging.** Every `/ask` call would be logged with a tamper-
-  resistant request id, the asking principal, the chunks returned, and
-  the answer hash. Logs would *not* include the chunk text or the answer
-  body, only hashes, to avoid creating new PHI artifacts.
-- **PHI-aware ingestion.** A redaction step (regex + named-entity model)
-  before embedding strips obvious identifiers from documents that may
-  carry them.
+- **Local LLM only.** Ollama keeps the inference on-prem.
+- **Encryption.** Encrypt the vector store at rest and use mTLS between
+  services.
+- **Audit logging.** Tamper-evident audit log of every `/ask` call (request
+  id, principal, retrieved chunk IDs, answer hash). Logs would *not*
+  include the chunk text or answer body — that would create new PHI.
+- **PHI-aware ingestion.** Redaction step (regex + NER) before embedding.
 - **Authentication and authorisation.** OAuth2/OIDC with role-based access,
-  scoped per document collection. The current API has no auth, which is
-  fine for a hackathon prototype but called out explicitly.
+  scoped per document collection.
 - **Right-to-be-forgotten.** Track document → chunk-id mappings so a
   patient deletion request can purge all derived embeddings.
 
@@ -374,35 +388,33 @@ This prototype uses synthetic documents only. For a production deployment:
 ## Limitations and future improvements
 
 - **No hybrid search.** Pure dense retrieval. Adding BM25 + reciprocal-
-  rank fusion would help on rare-keyword questions (e.g. specific drug
-  names). Maybe 30 minutes of work.
-- **No reranker.** A cross-encoder reranker (`bge-reranker-base`) over
-  the top 20 candidates would visibly improve precision at top-_k_.
+  rank fusion would help on rare-keyword queries.
+- **No reranker.** A cross-encoder reranker over the top 20 candidates
+  would improve precision at top-_k_.
 - **No streaming.** UI shows a spinner instead of token-by-token output.
-- **No conversation memory.** Each `/ask` call is independent. Adding
-  multi-turn would require a session id and a conversation buffer.
+- **No conversation memory.** Each `/ask` call is independent.
 - **Authentication.** None. See above.
-- **Chunk size is uniform.** Larger documents (research papers) would
-  benefit from semantic chunking or section-aware splitting.
-- **Eval is keyword-based.** Adequate for a hackathon, but a production
-  deployment should use an LLM-as-judge or human review for answer
-  quality scoring.
+- **Aggregation queries.** Questions like "list all tablets in the
+  catalog" can't be answered well by RAG (LLM only sees top-_k_ chunks).
+  Production would route those to SQL/pandas.
+- **Eval is keyword-based.** Adequate for a hackathon; production would
+  use LLM-as-judge or human review.
 
 ---
 
 ## What gets demoed live
 
-1. `docker compose up` boots the stack.
+1. `docker compose up --build` boots the stack.
 2. `ollama pull llama3.2:3b` and `/ingest`.
-3. Hit the Streamlit UI → ask a known good question → show the cited chunk.
-4. Drop a new `.txt` into `data/public/`, hit "Re-ingest" in the sidebar,
-   and ask a question about it.
-5. Ask an out-of-scope question to show the refusal path.
-6. Ask "Can I book a cardiology appointment for Monday?" to show the agent
-   route to the mock tool.
+3. Streamlit UI → ask a known good question → show the cited chunk.
+4. Drop a CSV/PDF into the inline uploader → "Ingest now" → ask a
+   question about it.
+5. Ask an out-of-scope question → see the refusal path.
+6. Ask "Can I book a cardiology appointment for Monday?" → agent route to
+   mock tool.
 7. Run `python -m eval.eval` to show the green pass count.
-8. Open `app/prompts.py`, modify a prompt rule, and answer the same
-   question again to demonstrate live tunability.
+8. Open `app/prompts.py`, modify a rule, re-ask the same question to
+   show live tunability.
 
 ---
 
