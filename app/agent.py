@@ -86,26 +86,27 @@ def _heuristic_intent(question: str) -> Intent:
 
 
 def classify_intent(question: str) -> Intent:
-    """LLM-first classification with a keyword fallback."""
-    try:
-        response = chat(
-            system_prompt=ROUTER_SYSTEM_PROMPT,
-            user_prompt=build_router_user_prompt(question),
-            temperature=0.0,
-        )
-    except LLMError:
-        log_event(log, "router.llm_unavailable_fallback")
-        return _heuristic_intent(question)
+    """Strict heuristic: appointment only on explicit booking phrasing.
+    Everything else → knowledge → RAG. Skips the LLM router for speed
+    and reliability on small models."""
+    q = question.lower()
 
-    raw = (response.text or "").strip().lower()
-    # Be forgiving: take the first known token we see.
-    for token in raw.replace(",", " ").split():
-        token = token.strip(".:;!? ")
-        if token in {Intent.KNOWLEDGE.value, Intent.APPOINTMENT.value, Intent.OUT_OF_SCOPE.value, Intent.GREETING.value}:
-            return Intent(token)
+    # Greeting: very short and clearly conversational.
+    greetings = ("hi", "hello", "hey", "what can you", "help me", "who are you")
+    if len(q.strip()) < 30 and any(g in q for g in greetings):
+        return Intent.GREETING
 
-    log_event(log, "router.unparseable_response", raw=raw[:80])
-    return _heuristic_intent(question)
+    # Appointment: must contain a strong booking verb.
+    strong_appointment_phrases = (
+        "book", "booking", "schedule a ", "scheduling a ",
+        "available slot", "any slot", "free slot", "open slot",
+        "reschedule", "cancel my appointment",
+    )
+    if any(p in q for p in strong_appointment_phrases):
+        return Intent.APPOINTMENT
+
+    # Default — let RAG handle it. Refusal sentinel covers out-of-scope.
+    return Intent.KNOWLEDGE
 
 
 # ---------------------------------------------------------------------------
