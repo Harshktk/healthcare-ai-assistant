@@ -41,25 +41,14 @@ with st.sidebar:
         except Exception as exc:  # noqa: BLE001
             st.error(f"Health check failed: {exc}")
 
-    st.markdown("### Knowledge base")
-    uploaded_files = st.file_uploader(
-        "Upload .md / .txt / .pdf / .csv / .json / .xml (optional)",
-        type=["md", "txt", "pdf", "csv", "json", "xml"],
-        accept_multiple_files=True,
-    )
-    reset = st.checkbox("Reset before ingest", value=True)
-
-    if st.button("Ingest", use_container_width=True):
-        with st.spinner("Ingesting..."):
+    st.markdown("### Knowledge base (admin)")
+    st.caption("Re-index everything in the data/ folder. Use the inline uploader near the chat to add a single document.")
+    if st.button("Re-ingest data folder (reset)", use_container_width=True):
+        with st.spinner("Re-ingesting..."):
             try:
-                files_payload = [
-                    ("files", (f.name, f.getvalue(), f.type or "application/octet-stream"))
-                    for f in (uploaded_files or [])
-                ]
                 resp = httpx.post(
                     f"{API_BASE_URL}/ingest",
-                    params={"reset": str(reset).lower()},
-                    files=files_payload or None,
+                    params={"reset": "true"},
                     timeout=300,
                 ).json()
                 st.success(
@@ -68,7 +57,7 @@ with st.sidebar:
                 )
                 if resp.get("errors"):
                     st.warning(resp["errors"])
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 st.error(f"Ingest failed: {exc}")
 
     st.markdown("---")
@@ -142,6 +131,41 @@ for msg in st.session_state.messages:
             _render_assistant_payload(msg["payload"])
         else:
             st.markdown(msg.get("content", ""))
+
+
+# ---------------------------------------------------------------------------
+# Inline document attachment (sits just above the chat input)
+
+
+with st.expander(":paperclip: Attach a document to the knowledge base", expanded=False):
+    inline_files = st.file_uploader(
+        "Drop a .md / .txt / .pdf / .csv / .json / .xml — then click Ingest",
+        type=["md", "txt", "pdf", "csv", "json", "xml"],
+        accept_multiple_files=True,
+        key="inline_uploader",
+        label_visibility="collapsed",
+    )
+    if inline_files and st.button("Ingest now", key="inline_ingest"):
+        with st.spinner(f"Ingesting {len(inline_files)} file(s)…"):
+            try:
+                files_payload = [
+                    ("files", (f.name, f.getvalue(), f.type or "application/octet-stream"))
+                    for f in inline_files
+                ]
+                resp = httpx.post(
+                    f"{API_BASE_URL}/ingest",
+                    params={"reset": "false"},
+                    files=files_payload,
+                    timeout=300,
+                ).json()
+                st.success(
+                    f"Indexed {resp.get('chunks_indexed', 0)} chunks across "
+                    f"{resp.get('files_processed', 0)} file(s). Ask away."
+                )
+                if resp.get("errors"):
+                    st.warning(resp["errors"])
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Upload failed: {exc}")
 
 
 # ---------------------------------------------------------------------------
